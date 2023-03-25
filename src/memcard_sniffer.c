@@ -33,8 +33,9 @@ uint offsetDatReader;
 uint32_t buffIndex = 0;
 uint8_t cmdBuffer[BUFF_LEN];
 uint8_t datBuffer[BUFF_LEN];
+bool restartBuffer[BUFF_LEN];
 
-bool restartProto = false;
+volatile uint8_t restartProto = true; // We can't change this in IRQ funct w/out being volatile
 
 /**
  * @brief Interrupt handler called when SEL goes high
@@ -47,7 +48,7 @@ void pio0_irq0() {
 	pio_sm_exec(pio, smDatReader, pio_encode_jmp(offsetDatReader));	// restart smDatReader PC
 	pio_interrupt_clear(pio0, 0);
 	pio_enable_sm_mask_in_sync(pio, 1 << smCmdReader | 1 << smDatReader);
-	restartProto = true;
+  restartProto++;
 }
 
 int main() {
@@ -67,9 +68,9 @@ int main() {
 	smCmdReader = pio_claim_unused_sm(pio, true);
 	smDatReader = pio_claim_unused_sm(pio, true);
 
-	dat_reader_program_init(pio, smDatReader, offsetDatReader, PIN_DAT);
-	cmd_reader_program_init(pio, smCmdReader, offsetCmdReader, PIN_CMD, PIN_ACK);
-	sel_monitor_program_init(pio, smSelMonitor, offsetSelMonitor, PIN_SEL);
+	dat_reader_program_init(pio, smDatReader, offsetDatReader);
+	cmd_reader_program_init(pio, smCmdReader, offsetCmdReader);
+	sel_monitor_program_init(pio, smSelMonitor, offsetSelMonitor);
 
 	/* Enable all SM simultaneously */
 	uint32_t smMask = (1 << smSelMonitor) | (1 << smCmdReader) | (1 << smDatReader);
@@ -79,10 +80,49 @@ int main() {
 	for(int i = 0; i < BUFF_LEN; ++i) {
 		cmdBuffer[i] = read_byte_blocking(pio, smCmdReader);
 		datBuffer[i] = read_byte_blocking(pio, smDatReader);
+    restartBuffer[i] = restartProto / 2 % 2; // IRQ is called twice (why?) - is half of it odd?
+    restartProto = 0;                        // Reset to default value until next IRQ
 	}
 
-	/* Printing results */
-	for(int i = 0; i < BUFF_LEN; ++i) {
-		printf("\t%.2x\t%.2x\n", cmdBuffer[i], datBuffer[i]);
-	}
+	/* Printing results - byte by byte */
+	// for(int i = 0; i < BUFF_LEN; ++i) {
+	// 	printf("\t%.2x\t%.2x\n", cmdBuffer[i], datBuffer[i]);
+	// }
+
+	/* Printing results - Could be optimised */
+  int curStart = 0;
+  for(int i = 0; i < BUFF_LEN; i++) {
+    if (restartBuffer[i]) {
+      const int byteLen = i-curStart;
+
+      if (byteLen >= 1) {
+        printf("Target=");
+        switch(cmdBuffer[curStart]) {
+          case 0x01:
+            printf("JOY"); // Joypad
+            break;
+          case 0x81:
+            printf("MC"); // Memory Card
+            break;
+          default:
+            printf("UNKNOWN");
+        }
+        printf("\n");
+      }
+
+      printf("TX: "); // Print PS1 Transmit (CMD)
+      for (int j = 0; j < byteLen; j++) {
+        printf("%02X ", cmdBuffer[curStart+j]);
+      }
+      printf("\n");
+
+      printf("RX: "); // Print MC/JOY Receive (DAT)
+      for (int j = 0; j < byteLen; j++) {
+        printf("%02X ", datBuffer[curStart+j]);
+      }
+      printf("\n\n");
+      curStart = i;
+    }
+    // We ignore any leftover bytes as we're still mid-transfer (SEL low)
+  }
 }
