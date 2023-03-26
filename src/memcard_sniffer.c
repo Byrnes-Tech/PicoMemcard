@@ -8,15 +8,7 @@
 
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "hardware/pio.h"
-#include "hardware/irq.h"
 #include "psxSPI.pio.h"
-
-#define PIN_DAT 5
-#define PIN_CMD 6
-#define PIN_SEL 7
-#define PIN_CLK 8
-#define PIN_ACK 9
 
 #define BUFF_LEN 4096
 
@@ -30,24 +22,20 @@ uint offsetSelMonitor;
 uint offsetCmdReader;
 uint offsetDatReader;
 
-uint32_t buffIndex = 0;
 uint8_t cmdBuffer[BUFF_LEN];
 uint8_t datBuffer[BUFF_LEN];
 bool restartBuffer[BUFF_LEN];
 
-volatile uint8_t restartProto = true; // We can't change this in IRQ funct w/out being volatile
+volatile uint8_t restartProto = 0; // We can't change this in IRQ funct w/out being volatile
 
 /**
  * @brief Interrupt handler called when SEL goes high
  * Resets cmdReader and datWriter state machines
  */
 void pio0_irq0() {
-	pio_set_sm_mask_enabled(pio, 1 << smCmdReader | 1 << smDatReader, false);
-	pio_restart_sm_mask(pio, 1 << smCmdReader | 1 << smDatReader);
 	pio_sm_exec(pio, smCmdReader, pio_encode_jmp(offsetCmdReader));	// restart smCmdReader PC
 	pio_sm_exec(pio, smDatReader, pio_encode_jmp(offsetDatReader));	// restart smDatReader PC
 	pio_interrupt_clear(pio0, 0);
-	pio_enable_sm_mask_in_sync(pio, 1 << smCmdReader | 1 << smDatReader);
   restartProto++;
 }
 
@@ -80,14 +68,9 @@ int main() {
 	for(int i = 0; i < BUFF_LEN; ++i) {
 		cmdBuffer[i] = read_byte_blocking(pio, smCmdReader);
 		datBuffer[i] = read_byte_blocking(pio, smDatReader);
-    restartBuffer[i] = restartProto / 2 % 2; // IRQ is called twice (why?) - is half of it odd?
+    restartBuffer[i] = restartProto / 2 % 2; // IRQ is called twice - is half of restartProto odd?
     restartProto = 0;                        // Reset to default value until next IRQ
 	}
-
-	/* Printing results - byte by byte */
-	// for(int i = 0; i < BUFF_LEN; ++i) {
-	// 	printf("\t%.2x\t%.2x\n", cmdBuffer[i], datBuffer[i]);
-	// }
 
 	/* Printing results - Could be optimised */
   int curStart = 0;
