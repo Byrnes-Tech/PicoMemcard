@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 
 include(${CMAKE_SOURCE_DIR}/pico_sdk_import.cmake)
 
-project(memcard_sniffer C CXX ASM)
+project(memcard_sniffer C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
